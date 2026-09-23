@@ -15,6 +15,6 @@
     },
     "dependencies": {
         "robtillaart/INA238": "^0.1.1",
-        "robtillaart/PCT2075": "^0.1.1"
+        "sparkfun/SparkFun TMP102 Breakout": "^1.1.2"
     }
 }
