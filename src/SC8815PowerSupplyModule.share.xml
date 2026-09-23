@@ -1,0 +1,710 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-model href="../../../../Organization/knxprod-support/knx_project_20/knx-editor.xsd" type="application/xml" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<KNX xmlns:op="http://github.com/OpenKNX/OpenKNXproducer" xmlns="http://knx.org/xml/project/20" CreatedBy="KNX MT" ToolVersion="5.1.255.16695">
+  <ManufacturerData>
+    <Manufacturer RefId="M-00FA">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="%AID%" ApplicationNumber="200" ApplicationVersion="1" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="PM" LoadProcedureStyle="MergedProcedure" PeiType="0" DefaultLanguage="de" DynamicTableManagement="false" Linkable="false" MinEtsVersion="4.0">
+          <Static>
+            <ParameterTypes>
+              <ParameterType Id="%AID%_PT-ResetTime" Name="ResetTime">
+                <TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="1" maxInclusive="255" />
+              </ParameterType>
+              <ParameterType Id="%AID%_PT-MinimumChange" Name="MinimumChange">
+                <TypeNumber SizeInBit="16" Type="signedInt" minInclusive="0" maxInclusive="1000" />
+              </ParameterType>
+
+              <ParameterType Id="%AID%_PT-SC8815BusCurrent" Name="SC8815BusCurrent">
+                  <TypeRestriction Base="Value" SizeInBit="16">
+                    <Enumeration Id="%AID%_PT-SC8815BusCurrent_EN-640" Text="640 mA" Value="640" />
+                    <Enumeration Id="%AID%_PT-SC8815BusCurrent_EN-960" Text="960 mA" Value="960" />
+                    <Enumeration Id="%AID%_PT-SC8815BusCurrent_EN-1280" Text="1280 mA" Value="1280" />
+                  </TypeRestriction>
+              </ParameterType>
+
+              <ParameterType Id="%AID%_PT-SC8815AuxVoltage" Name="SC8815AuxVoltage">
+                <!-- 5 bit 足够表示 24..30 V (<= 31)，收窄后同一字节里可以再放一个 1 bit 的使能开关，
+                     参数段 (115..152) 已经完全占满，只能这样腾位。 -->
+                <TypeRestriction Base="Value" SizeInBit="5">
+                  <Enumeration Id="%AID%_PT-SC8815AuxVoltage_EN-24" Text="24 V" Value="24" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxVoltage_EN-25" Text="25 V" Value="25" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxVoltage_EN-26" Text="26 V" Value="26" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxVoltage_EN-27" Text="27 V" Value="27" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxVoltage_EN-28" Text="28 V" Value="28" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxVoltage_EN-29" Text="29 V"  Value="29" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxVoltage_EN-30" Text="30 V" Value="30" />
+                </TypeRestriction>
+              </ParameterType>
+
+              <ParameterType Id="%AID%_PT-SC8815AuxCurrent" Name="SC8815AuxCurrent">
+                <TypeRestriction Base="Value" SizeInBit="16">
+                  <Enumeration Id="%AID%_PT-SC8815AuxCurrent_EN-960" Text="960 mA" Value="960" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxCurrent_EN-1280" Text="1280 mA" Value="1280" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxCurrent_EN-1920" Text="1920 mA" Value="1920" />
+                  <Enumeration Id="%AID%_PT-SC8815AuxCurrent_EN-2240" Text="2240 mA" Value="2240" />
+                </TypeRestriction>
+              </ParameterType>
+
+              <!-- SC8815 开关频率：值就是 kHz 本身（<= 450 需要 9 bit），固件可以直接比较数值 -->
+              <ParameterType Id="%AID%_PT-SC8815Frequency" Name="SC8815Frequency">
+                <TypeRestriction Base="Value" SizeInBit="9">
+                  <Enumeration Id="%AID%_PT-SC8815Frequency_EN-150" Text="150 kHz" Value="150" />
+                  <Enumeration Id="%AID%_PT-SC8815Frequency_EN-300" Text="300 kHz" Value="300" />
+                  <Enumeration Id="%AID%_PT-SC8815Frequency_EN-450" Text="450 kHz" Value="450" />
+                </TypeRestriction>
+              </ParameterType>
+
+            </ParameterTypes>
+            <Parameters>
+              <Union SizeInBit="8">
+                <Memory CodeSegment="%AID%_RS-04-00000" Offset="0" BitOffset="0" />
+                <Parameter Id="%AID%_UP-%TT%00001" Name="ResetTime" ParameterType="%AID%_PT-ResetTime" Offset="0" BitOffset="0" Text="复位时间" Value="10" SuffixText="s" />
+              </Union>
+              <!-- 584 Bit (73 Byte)：起始于共用参数段偏移 115 -> 115..183。
+                   前 51 字节 (115..165) 是最初的布局，之后追加：
+                   51..55 辅助电源温度上报设置(166..170)、56..66 辅助电源输入电压/电流上报设置(171..181)、
+                   67..68 辅助电源开关频率(182..183)、69..72 辅助电源负载上报设置(184..187)。
+                   两块 SC8815 各自一套 输入/输出/温度/频率/负载，互不影响。
+                   后续模块（LOG/FCB…）的基地址由 producer 自动排布，会随本 Union 变大而后移；
+                   SizeInBit 必须是 8 的整数倍（非字节对齐会分配失败）。
+                   Parameter 的 Offset 是相对 Union 起点的**字节**偏移（实测生成头文件：
+                   Offset 0 -> 115, Offset 35 -> 150）。同一个字节内位号 = 7 - BitOffset（反序）；
+                   两个参数若声明成相同的 Offset+BitOffset，就占用同一块内存（producer 报 WARN 010，
+                   ETS 里这两个参数会互相覆盖）。
+                   内部布局：0..37 原有参数(115..152)、38 总线输入发送开关、39..43 总线输入电压上报设置、
+                   44..48 总线输入电流上报设置、49..50 总线开关频率、51..55 辅助温度上报设置、
+                   56..66 辅助输入上报设置、67..68 辅助开关频率、69..72 辅助负载上报设置。 -->
+              <Union SizeInBit="584">
+                <Memory CodeSegment="%AID%_RS-04-00000" Offset="1" BitOffset="0" />
+                <Parameter Id="%AID%_UP-%TT%00002" Name="PowerSupply1ChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="0" BitOffset="0" Text="发送总线电源状态" Value="0" />
+                <!-- BitOffset 不可重复：同一 Offset+BitOffset = 同一块内存（实测 BitOffset 2 会让本参数
+                     与 00004 同时落在字节 115 的 bit 5，ETS 里两个开关会互相覆盖）→ 这里用 1 = bit 6。 -->
+                <Parameter Id="%AID%_UP-%TT%00003" Name="PowerSupply2ChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="0" BitOffset="1" Text="发送辅助电源状态" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00004" Name="BusVoltageChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="0" BitOffset="2" Text="发送总线电源电压" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00005" Name="BusCurrentChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="0" BitOffset="3" Text="发送总线电源电流" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00006" Name="BusLoadChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="0" BitOffset="4" Text="发送总线负载" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00007" Name="AuxVoltageChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="0" BitOffset="5" Text="发送辅助电源电压" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00008" Name="AuxCurrentChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="0" BitOffset="6" Text="发送辅助电源电流" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00009" Name="TemperatureChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="0" BitOffset="7" Text="发送总线电源温度" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00010" Name="PowerSupply1SendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="1" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00011" Name="PowerSupply1SendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="1" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00012" Name="PowerSupply2SendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="3" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00013" Name="PowerSupply2SendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="3" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00014" Name="BusVoltageSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="5" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00015" Name="BusVoltageSendMinChangeAbsolute" ParameterType="%AID%_PT-MinimumChange" Offset="6" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="mV" />
+                <Parameter Id="%AID%_UP-%TT%00016" Name="BusVoltageSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="8" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00017" Name="BusVoltageSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="8" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00018" Name="BusCurrentSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="10" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00019" Name="BusCurrentSendMinChangeAbsolute" ParameterType="%AID%_PT-MinimumChange" Offset="11" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="mA" />
+                <Parameter Id="%AID%_UP-%TT%00020" Name="BusCurrentSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="13" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00021" Name="BusCurrentSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="13" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00022" Name="BusLoadSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="15" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00023" Name="BusLoadSendMinChangeAbsolute" ParameterType="%AID%_PT-ValueDpt5001" Offset="16" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00024" Name="BusLoadSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="17" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00025" Name="BusLoadSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="17" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00026" Name="AuxVoltageSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="19" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00027" Name="AuxVoltageSendMinChangeAbsolute" ParameterType="%AID%_PT-MinimumChange" Offset="20" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="mV" />
+                <Parameter Id="%AID%_UP-%TT%00028" Name="AuxVoltageSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="22" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00029" Name="AuxVoltageSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="22" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00030" Name="AuxCurrentSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="24" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00031" Name="AuxCurrentSendMinChangeAbsolute" ParameterType="%AID%_PT-MinimumChange" Offset="25" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="mA" />
+                <Parameter Id="%AID%_UP-%TT%00032" Name="AuxCurrentSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="27" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00033" Name="AuxCurrentSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="27" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00034" Name="TemperatureSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="29" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00035" Name="TemperatureSendMinChangeAbsolute" ParameterType="%AID%_PT-ValueDpt5001" Offset="30" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="°C" />
+                <Parameter Id="%AID%_UP-%TT%00036" Name="TemperatureSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="31" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00037" Name="TemperatureSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="31" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00038" Name="SC8815BusCurrent" ParameterType="%AID%_PT-SC8815BusCurrent" Offset="33" BitOffset="0" Text="总线电源电流" Value="640" SuffixText="mA" />
+                <Parameter Id="%AID%_UP-%TT%00039" Name="SC8815AuxVoltage" ParameterType="%AID%_PT-SC8815AuxVoltage" Offset="35" BitOffset="0" Text="辅助电源电压" Value="24" SuffixText="V" />
+                <Parameter Id="%AID%_UP-%TT%00040" Name="SC8815AuxCurrent" ParameterType="%AID%_PT-SC8815AuxCurrent" Offset="36" BitOffset="0" Text="辅助电源电流" Value="960" SuffixText="mA" />
+                <!-- SC8815 使能开关: 1 = 显示/使用 SC8815 设置，0 = 隐藏对应界面。
+                     AuxVoltage 收窄到 5 bit 后，同一字节里能放下这个 1 bit 参数，
+                     Union 保持 304 bit 不变（它不能扩大，后面紧跟逻辑模块的参数）。
+                     实测位置（见 include/knxprod.h）: BusCurrent = 字节 148..149,
+                     AuxVoltage = 字节 150 bit 7..3, AuxEnabled = 字节 150 bit 2,
+                     AuxCurrent = 字节 151..152。 -->
+                <Parameter Id="%AID%_UP-%TT%00041" Name="SC8815AuxEnabled" ParameterType="%AID%_PT-OnOffYesNo" Offset="35" BitOffset="5" Text="SC8815 辅助电源使能" Value="0" />
+
+                <!-- ==== SC8815 输入电压上报（KO InputVoltage / Ko 31）====
+                     与其它测量量同一套模式：发送开关 + 相对/绝对最小变化量 + 循环发送时间。 -->
+                <Parameter Id="%AID%_UP-%TT%00042" Name="InputVoltageChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="38" BitOffset="0" Text="发送总线电源输入电压" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00043" Name="InputVoltageSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="39" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00044" Name="InputVoltageSendMinChangeAbsolute" ParameterType="%AID%_PT-MinimumChange" Offset="40" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="mV" />
+                <Parameter Id="%AID%_UP-%TT%00045" Name="InputVoltageSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="42" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00046" Name="InputVoltageSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="42" BitOffset="2" Text="时间" Value="0" />
+
+                <!-- ==== SC8815 输入电流上报（KO InputCurrent / Ko 32）==== -->
+                <Parameter Id="%AID%_UP-%TT%00047" Name="InputCurrentChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="38" BitOffset="1" Text="发送总线电源输入电流" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00048" Name="InputCurrentSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="44" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00049" Name="InputCurrentSendMinChangeAbsolute" ParameterType="%AID%_PT-MinimumChange" Offset="45" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="mA" />
+                <Parameter Id="%AID%_UP-%TT%00050" Name="InputCurrentSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="47" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00051" Name="InputCurrentSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="47" BitOffset="2" Text="时间" Value="0" />
+
+                <!-- ==== SC8815 开关频率（总线电源这块芯片）====
+                     值 = kHz（150/300/450），9 bit 放得下；写入 SC8815 的 FREQ 寄存器。
+                     默认 300 kHz。 -->
+                <Parameter Id="%AID%_UP-%TT%00052" Name="SC8815Frequency" ParameterType="%AID%_PT-SC8815Frequency" Offset="49" BitOffset="0" Text="开关频率" Value="300" SuffixText="kHz" />
+
+                <!-- ==== 辅助电源温度上报设置（Offset 51..55 = 设备字节 166..170）====
+                     两块 SC8815 各自带温度传感器：这是辅助电源那块的，单独一套设置，
+                     与总线电源温度（00009/00034..00037）互不影响。 -->
+                <Parameter Id="%AID%_UP-%TT%00053" Name="AuxTemperatureChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="51" BitOffset="0" Text="发送辅助电源温度" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00054" Name="AuxTemperatureSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="52" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00055" Name="AuxTemperatureSendMinChangeAbsolute" ParameterType="%AID%_PT-ValueDpt5001" Offset="53" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="°C" />
+                <Parameter Id="%AID%_UP-%TT%00056" Name="AuxTemperatureSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="54" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00057" Name="AuxTemperatureSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="54" BitOffset="2" Text="时间" Value="0" />
+
+                <!-- ==== 辅助电源 SC8815 的输入电压/电流上报（Offset 56..66 = 字节 171..181）====
+                     两块芯片各有一路输入测量，结构与总线电源那套（00042..00051）完全一样。
+                     KO：辅助电源输入电压 = Ko 34，辅助电源输入电流 = Ko 35。 -->
+                <Parameter Id="%AID%_UP-%TT%00058" Name="AuxInputVoltageChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="56" BitOffset="0" Text="发送辅助电源输入电压" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00059" Name="AuxInputVoltageSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="57" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00060" Name="AuxInputVoltageSendMinChangeAbsolute" ParameterType="%AID%_PT-MinimumChange" Offset="58" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="mV" />
+                <Parameter Id="%AID%_UP-%TT%00061" Name="AuxInputVoltageSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="60" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00062" Name="AuxInputVoltageSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="60" BitOffset="2" Text="时间" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00063" Name="AuxInputCurrentChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="56" BitOffset="1" Text="发送辅助电源输入电流" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00064" Name="AuxInputCurrentSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="62" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00065" Name="AuxInputCurrentSendMinChangeAbsolute" ParameterType="%AID%_PT-MinimumChange" Offset="63" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="mA" />
+                <Parameter Id="%AID%_UP-%TT%00066" Name="AuxInputCurrentSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="65" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00067" Name="AuxInputCurrentSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="65" BitOffset="2" Text="时间" Value="0" />
+
+                <!-- ==== SC8815 开关频率（辅助电源那块芯片）==== -->
+                <Parameter Id="%AID%_UP-%TT%00068" Name="AuxSC8815Frequency" ParameterType="%AID%_PT-SC8815Frequency" Offset="67" BitOffset="0" Text="开关频率" Value="300" SuffixText="kHz" />
+
+                <!-- ==== 辅助电源负载上报（Offset 69..72 = 字节 184..187）====
+                     KO：辅助电源负载 = Ko 38（1 Byte，DPST-5-1，与总线负载同一类型）。
+                     发送开关放在字节 56（Offset 56 BitOffset 2 = 位 5），
+                     与辅助输入的两个开关（Offset 56 BitOffset 0/1 = 位 7/6）同属一个字节。 -->
+                <Parameter Id="%AID%_UP-%TT%00069" Name="AuxLoadChangeSend" ParameterType="%AID%_PT-OnOffYesNo" Offset="56" BitOffset="2" Text="发送辅助电源负载" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00070" Name="AuxLoadSendMinChangePercent" ParameterType="%AID%_PT-ValueDpt5001" Offset="69" BitOffset="0" Text="相对最小变化量" Value="5" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00071" Name="AuxLoadSendMinChangeAbsolute" ParameterType="%AID%_PT-ValueDpt5001" Offset="70" BitOffset="0" Text="绝对最小变化量" Value="0" SuffixText="%" />
+                <Parameter Id="%AID%_UP-%TT%00072" Name="AuxLoadSendCyclicBase" ParameterType="%AID%_PT-DelayBase" Offset="71" BitOffset="0" Text="时间基准" Value="0" />
+                <Parameter Id="%AID%_UP-%TT%00073" Name="AuxLoadSendCyclicTime" ParameterType="%AID%_PT-DelayTime" Offset="71" BitOffset="2" Text="时间" Value="0" />
+              </Union>
+            </Parameters>
+            <ParameterRefs>
+              <ParameterRef Id="%AID%_UP-%TT%00001_R-%TT%0000101" RefId="%AID%_UP-%TT%00001" />
+              <ParameterRef Id="%AID%_UP-%TT%00002_R-%TT%0000201" RefId="%AID%_UP-%TT%00002" />
+              <ParameterRef Id="%AID%_UP-%TT%00003_R-%TT%0000301" RefId="%AID%_UP-%TT%00003" />
+              <ParameterRef Id="%AID%_UP-%TT%00004_R-%TT%0000401" RefId="%AID%_UP-%TT%00004" />
+              <ParameterRef Id="%AID%_UP-%TT%00005_R-%TT%0000501" RefId="%AID%_UP-%TT%00005" />
+              <ParameterRef Id="%AID%_UP-%TT%00006_R-%TT%0000601" RefId="%AID%_UP-%TT%00006" />
+              <ParameterRef Id="%AID%_UP-%TT%00007_R-%TT%0000701" RefId="%AID%_UP-%TT%00007" />
+              <ParameterRef Id="%AID%_UP-%TT%00008_R-%TT%0000801" RefId="%AID%_UP-%TT%00008" />
+              <ParameterRef Id="%AID%_UP-%TT%00009_R-%TT%0000901" RefId="%AID%_UP-%TT%00009" />
+              <ParameterRef Id="%AID%_UP-%TT%00010_R-%TT%0001001" RefId="%AID%_UP-%TT%00010" />
+              <ParameterRef Id="%AID%_UP-%TT%00011_R-%TT%0001101" RefId="%AID%_UP-%TT%00011" />
+              <ParameterRef Id="%AID%_UP-%TT%00012_R-%TT%0001201" RefId="%AID%_UP-%TT%00012" />
+              <ParameterRef Id="%AID%_UP-%TT%00013_R-%TT%0001301" RefId="%AID%_UP-%TT%00013" />
+              <ParameterRef Id="%AID%_UP-%TT%00014_R-%TT%0001401" RefId="%AID%_UP-%TT%00014" />
+              <ParameterRef Id="%AID%_UP-%TT%00015_R-%TT%0001501" RefId="%AID%_UP-%TT%00015" />
+              <ParameterRef Id="%AID%_UP-%TT%00016_R-%TT%0001601" RefId="%AID%_UP-%TT%00016" />
+              <ParameterRef Id="%AID%_UP-%TT%00017_R-%TT%0001701" RefId="%AID%_UP-%TT%00017" />
+              <ParameterRef Id="%AID%_UP-%TT%00018_R-%TT%0001801" RefId="%AID%_UP-%TT%00018" />
+              <ParameterRef Id="%AID%_UP-%TT%00019_R-%TT%0001901" RefId="%AID%_UP-%TT%00019" />
+              <ParameterRef Id="%AID%_UP-%TT%00020_R-%TT%0002001" RefId="%AID%_UP-%TT%00020" />
+              <ParameterRef Id="%AID%_UP-%TT%00021_R-%TT%0002101" RefId="%AID%_UP-%TT%00021" />
+              <ParameterRef Id="%AID%_UP-%TT%00022_R-%TT%0002201" RefId="%AID%_UP-%TT%00022" />
+              <ParameterRef Id="%AID%_UP-%TT%00023_R-%TT%0002301" RefId="%AID%_UP-%TT%00023" />
+              <ParameterRef Id="%AID%_UP-%TT%00024_R-%TT%0002401" RefId="%AID%_UP-%TT%00024" />
+              <ParameterRef Id="%AID%_UP-%TT%00025_R-%TT%0002501" RefId="%AID%_UP-%TT%00025" />
+              <ParameterRef Id="%AID%_UP-%TT%00026_R-%TT%0002601" RefId="%AID%_UP-%TT%00026" />
+              <ParameterRef Id="%AID%_UP-%TT%00027_R-%TT%0002701" RefId="%AID%_UP-%TT%00027" />
+              <ParameterRef Id="%AID%_UP-%TT%00028_R-%TT%0002801" RefId="%AID%_UP-%TT%00028" />
+              <ParameterRef Id="%AID%_UP-%TT%00029_R-%TT%0002901" RefId="%AID%_UP-%TT%00029" />
+              <ParameterRef Id="%AID%_UP-%TT%00030_R-%TT%0003001" RefId="%AID%_UP-%TT%00030" />
+              <ParameterRef Id="%AID%_UP-%TT%00031_R-%TT%0003101" RefId="%AID%_UP-%TT%00031" />
+              <ParameterRef Id="%AID%_UP-%TT%00032_R-%TT%0003201" RefId="%AID%_UP-%TT%00032" />
+              <ParameterRef Id="%AID%_UP-%TT%00033_R-%TT%0003301" RefId="%AID%_UP-%TT%00033" />
+              <ParameterRef Id="%AID%_UP-%TT%00034_R-%TT%0003401" RefId="%AID%_UP-%TT%00034" />
+              <ParameterRef Id="%AID%_UP-%TT%00035_R-%TT%0003501" RefId="%AID%_UP-%TT%00035" />
+              <ParameterRef Id="%AID%_UP-%TT%00036_R-%TT%0003601" RefId="%AID%_UP-%TT%00036" />
+              <ParameterRef Id="%AID%_UP-%TT%00037_R-%TT%0003701" RefId="%AID%_UP-%TT%00037" />
+              <ParameterRef Id="%AID%_UP-%TT%00038_R-%TT%0003801" RefId="%AID%_UP-%TT%00038" />
+              <ParameterRef Id="%AID%_UP-%TT%00039_R-%TT%0003901" RefId="%AID%_UP-%TT%00039" />
+              <ParameterRef Id="%AID%_UP-%TT%00040_R-%TT%0004001" RefId="%AID%_UP-%TT%00040" />
+              <ParameterRef Id="%AID%_UP-%TT%00041_R-%TT%0004101" RefId="%AID%_UP-%TT%00041" />
+              <ParameterRef Id="%AID%_UP-%TT%00042_R-%TT%0004201" RefId="%AID%_UP-%TT%00042" />
+              <ParameterRef Id="%AID%_UP-%TT%00043_R-%TT%0004301" RefId="%AID%_UP-%TT%00043" />
+              <ParameterRef Id="%AID%_UP-%TT%00044_R-%TT%0004401" RefId="%AID%_UP-%TT%00044" />
+              <ParameterRef Id="%AID%_UP-%TT%00045_R-%TT%0004501" RefId="%AID%_UP-%TT%00045" />
+              <ParameterRef Id="%AID%_UP-%TT%00046_R-%TT%0004601" RefId="%AID%_UP-%TT%00046" />
+              <ParameterRef Id="%AID%_UP-%TT%00047_R-%TT%0004701" RefId="%AID%_UP-%TT%00047" />
+              <ParameterRef Id="%AID%_UP-%TT%00048_R-%TT%0004801" RefId="%AID%_UP-%TT%00048" />
+              <ParameterRef Id="%AID%_UP-%TT%00049_R-%TT%0004901" RefId="%AID%_UP-%TT%00049" />
+              <ParameterRef Id="%AID%_UP-%TT%00050_R-%TT%0005001" RefId="%AID%_UP-%TT%00050" />
+              <ParameterRef Id="%AID%_UP-%TT%00051_R-%TT%0005101" RefId="%AID%_UP-%TT%00051" />
+              <ParameterRef Id="%AID%_UP-%TT%00052_R-%TT%0005201" RefId="%AID%_UP-%TT%00052" />
+              <ParameterRef Id="%AID%_UP-%TT%00053_R-%TT%0005301" RefId="%AID%_UP-%TT%00053" />
+              <ParameterRef Id="%AID%_UP-%TT%00054_R-%TT%0005401" RefId="%AID%_UP-%TT%00054" />
+              <ParameterRef Id="%AID%_UP-%TT%00055_R-%TT%0005501" RefId="%AID%_UP-%TT%00055" />
+              <ParameterRef Id="%AID%_UP-%TT%00056_R-%TT%0005601" RefId="%AID%_UP-%TT%00056" />
+              <ParameterRef Id="%AID%_UP-%TT%00057_R-%TT%0005701" RefId="%AID%_UP-%TT%00057" />
+              <ParameterRef Id="%AID%_UP-%TT%00058_R-%TT%0005801" RefId="%AID%_UP-%TT%00058" />
+              <ParameterRef Id="%AID%_UP-%TT%00059_R-%TT%0005901" RefId="%AID%_UP-%TT%00059" />
+              <ParameterRef Id="%AID%_UP-%TT%00060_R-%TT%0006001" RefId="%AID%_UP-%TT%00060" />
+              <ParameterRef Id="%AID%_UP-%TT%00061_R-%TT%0006101" RefId="%AID%_UP-%TT%00061" />
+              <ParameterRef Id="%AID%_UP-%TT%00062_R-%TT%0006201" RefId="%AID%_UP-%TT%00062" />
+              <ParameterRef Id="%AID%_UP-%TT%00063_R-%TT%0006301" RefId="%AID%_UP-%TT%00063" />
+              <ParameterRef Id="%AID%_UP-%TT%00064_R-%TT%0006401" RefId="%AID%_UP-%TT%00064" />
+              <ParameterRef Id="%AID%_UP-%TT%00065_R-%TT%0006501" RefId="%AID%_UP-%TT%00065" />
+              <ParameterRef Id="%AID%_UP-%TT%00066_R-%TT%0006601" RefId="%AID%_UP-%TT%00066" />
+              <ParameterRef Id="%AID%_UP-%TT%00067_R-%TT%0006701" RefId="%AID%_UP-%TT%00067" />
+              <ParameterRef Id="%AID%_UP-%TT%00068_R-%TT%0006801" RefId="%AID%_UP-%TT%00068" />
+              <ParameterRef Id="%AID%_UP-%TT%00069_R-%TT%0006901" RefId="%AID%_UP-%TT%00069" />
+              <ParameterRef Id="%AID%_UP-%TT%00070_R-%TT%0007001" RefId="%AID%_UP-%TT%00070" />
+              <ParameterRef Id="%AID%_UP-%TT%00071_R-%TT%0007101" RefId="%AID%_UP-%TT%00071" />
+              <ParameterRef Id="%AID%_UP-%TT%00072_R-%TT%0007201" RefId="%AID%_UP-%TT%00072" />
+              <ParameterRef Id="%AID%_UP-%TT%00073_R-%TT%0007301" RefId="%AID%_UP-%TT%00073" />
+            </ParameterRefs>
+            <ComObjectTable>
+              <ComObject Id="%AID%_O-%TT%00001" Name="PowerSupply1Status" Number="0" ObjectSize="1 Bit" Text="总线电源状态" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-1-1" />
+              <ComObject Id="%AID%_O-%TT%00002" Name="PowerSupply2Status" Number="1" ObjectSize="1 Bit" Text="辅助电源状态" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-1-1" />
+              <ComObject Id="%AID%_O-%TT%00003" Name="BusReset" Number="2" ObjectSize="1 Bit" Text="总线电源复位" FunctionText="触发" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Enabled" ReadOnInitFlag="Disabled" DatapointType="DPST-1-1" />
+              <ComObject Id="%AID%_O-%TT%00004" Name="BusVoltage" Number="3" ObjectSize="4 Bytes" Text="总线电源电压" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-14-27" />
+              <ComObject Id="%AID%_O-%TT%00005" Name="BusCurrent" Number="4" ObjectSize="4 Bytes" Text="总线电源电流" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-14-19" />
+              <ComObject Id="%AID%_O-%TT%00006" Name="BusLoad" Number="5" ObjectSize="1 Byte" Text="总线电源负载" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-5-1" />
+              <ComObject Id="%AID%_O-%TT%00007" Name="AuxVoltage" Number="6" ObjectSize="4 Bytes" Text="辅助电源电压" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-14-27" />
+              <ComObject Id="%AID%_O-%TT%00008" Name="AuxCurrent" Number="7" ObjectSize="4 Bytes" Text="辅助电源电流" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-14-19" />
+              <ComObject Id="%AID%_O-%TT%00009" Name="Temperature" Number="8" ObjectSize="2 Bytes" Text="总线电源温度" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-9-1" />
+              <ComObject Id="%AID%_O-%TT%00010" Name="SC8815Status" Number="9" ObjectSize="1 Bit" Text="总线 SC8815 运行状态" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-1-1" />
+              <ComObject Id="%AID%_O-%TT%00011" Name="SC8815ErrorCode" Number="10" ObjectSize="1 Byte" Text="总线 SC8815 故障代码" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-5-10"/>
+            
+              <ComObject Id="%AID%_O-%TT%00012" Name="InputVoltage" Number="11" ObjectSize="4 Bytes" Text="总线电源输入电压" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-14-27" />
+              <ComObject Id="%AID%_O-%TT%00013" Name="InputCurrent" Number="12" ObjectSize="4 Bytes" Text="总线电源输入电流" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-14-19" />
+              <!-- 辅助电源温度：第二块 SC8815 自带的温度传感器，有独立的发送开关/最小变化量/周期发送设置 -->
+              <ComObject Id="%AID%_O-%TT%00014" Name="Temperature2" Number="13" ObjectSize="2 Bytes" Text="辅助电源温度" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-9-1" />
+
+              <!-- 辅助电源 SC8815 的输入测量 + 芯片诊断（第二块芯片），KO 34..37 -->
+              <ComObject Id="%AID%_O-%TT%00015" Name="AuxInputVoltage" Number="14" ObjectSize="4 Bytes" Text="辅助电源输入电压" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-14-27" />
+              <ComObject Id="%AID%_O-%TT%00016" Name="AuxInputCurrent" Number="15" ObjectSize="4 Bytes" Text="辅助电源输入电流" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-14-19" />
+              <ComObject Id="%AID%_O-%TT%00017" Name="AuxSC8815Status" Number="16" ObjectSize="1 Bit" Text="辅助 SC8815 运行状态" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-1-1" />
+              <ComObject Id="%AID%_O-%TT%00018" Name="AuxSC8815ErrorCode" Number="17" ObjectSize="1 Byte" Text="辅助 SC8815 故障代码" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-5-10"/>
+
+              <!-- 辅助电源负载（第二块 SC8815 的输出侧），KO 38 -->
+              <ComObject Id="%AID%_O-%TT%00019" Name="AuxLoad" Number="18" ObjectSize="1 Byte" Text="辅助电源负载" FunctionText="状态" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" DatapointType="DPST-5-1" />
+
+              <!-- 辅助电源复位（触发型，与 BusReset 对称）：写入 1 触发第二块 SC8815 的复位，KO 39 -->
+              <ComObject Id="%AID%_O-%TT%00020" Name="AuxReset" Number="19" ObjectSize="1 Bit" Text="辅助电源复位" FunctionText="触发" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Enabled" ReadOnInitFlag="Disabled" DatapointType="DPST-1-1" />
+                         
+            </ComObjectTable>
+            <ComObjectRefs>
+              <ComObjectRef Id="%AID%_O-%TT%00001_R-%TT%0000101" RefId="%AID%_O-%TT%00001" />
+              <ComObjectRef Id="%AID%_O-%TT%00002_R-%TT%0000201" RefId="%AID%_O-%TT%00002" />
+              <ComObjectRef Id="%AID%_O-%TT%00003_R-%TT%0000301" RefId="%AID%_O-%TT%00003" />
+              <ComObjectRef Id="%AID%_O-%TT%00004_R-%TT%0000401" RefId="%AID%_O-%TT%00004" />
+              <ComObjectRef Id="%AID%_O-%TT%00005_R-%TT%0000501" RefId="%AID%_O-%TT%00005" />
+              <ComObjectRef Id="%AID%_O-%TT%00006_R-%TT%0000601" RefId="%AID%_O-%TT%00006" />
+              <ComObjectRef Id="%AID%_O-%TT%00007_R-%TT%0000701" RefId="%AID%_O-%TT%00007" />
+              <ComObjectRef Id="%AID%_O-%TT%00008_R-%TT%0000801" RefId="%AID%_O-%TT%00008" />
+              <ComObjectRef Id="%AID%_O-%TT%00009_R-%TT%0000901" RefId="%AID%_O-%TT%00009" />
+              <ComObjectRef Id="%AID%_O-%TT%00010_R-%TT%0001001" RefId="%AID%_O-%TT%00010" />
+              <ComObjectRef Id="%AID%_O-%TT%00011_R-%TT%0001101" RefId="%AID%_O-%TT%00011" />
+              <ComObjectRef Id="%AID%_O-%TT%00012_R-%TT%0001201" RefId="%AID%_O-%TT%00012" />
+              <ComObjectRef Id="%AID%_O-%TT%00013_R-%TT%0001301" RefId="%AID%_O-%TT%00013" />
+              <ComObjectRef Id="%AID%_O-%TT%00014_R-%TT%0001401" RefId="%AID%_O-%TT%00014" />
+              <ComObjectRef Id="%AID%_O-%TT%00015_R-%TT%0001501" RefId="%AID%_O-%TT%00015" />
+              <ComObjectRef Id="%AID%_O-%TT%00016_R-%TT%0001601" RefId="%AID%_O-%TT%00016" />
+              <ComObjectRef Id="%AID%_O-%TT%00017_R-%TT%0001701" RefId="%AID%_O-%TT%00017" />
+              <ComObjectRef Id="%AID%_O-%TT%00018_R-%TT%0001801" RefId="%AID%_O-%TT%00018" />
+              <ComObjectRef Id="%AID%_O-%TT%00019_R-%TT%0001901" RefId="%AID%_O-%TT%00019" />
+              <ComObjectRef Id="%AID%_O-%TT%00020_R-%TT%0002001" RefId="%AID%_O-%TT%00020" />
+            </ComObjectRefs>
+            <Script>
+            </Script>
+          </Static>
+          <Dynamic>
+            <!-- 通道：SC8815 电源 —— 两块独立的 SC8815 芯片，各一个参数页（两个独立系统）
+                 页面 1 “SC8815 总线电源”：复位时间、总线电流上限、开关频率、输入电压/电流、总线电压/电流/负载、总线电源温度、总线电源状态、芯片诊断。
+                 页面 2 “SC8815 辅助电源”：使能、辅助电源电压/电流、开关频率、输入电压/电流、辅助电源状态/电压/电流/负载/温度、复位触发、芯片诊断。
+                 （注：一个 OpenKNX 模块只能有一个 <Channel>，模块列表是按 Channel 生成的；
+                    所以两套界面用同一个 Channel 下的两个非 Inline ParameterBlock 实现。） -->
+            <Channel Id="%AID%_CH-%PREFIX%" Number="%PREFIX%" Name="Main" Text="SC8815 电源" Icon="power-plug">
+              <!-- ============ 页面 1：SC8815 总线电源 ============ -->
+              <ParameterBlock Id="%AID%_PB-nnn" Name="BusSettings" Text="SC8815 总线电源" Icon="cog-outline" ShowInComObjectTree="true">
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="SC8815 总线电源 版本 %ModuleVersion%" UIHint="Headline" />
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="" UIHint="HorizontalRuler" />
+
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="设置" UIHint="Headline" />
+                <ParameterRefRef RefId="%AID%_UP-%TT%00001_R-%TT%0000101" IndentLevel="1" HelpContext="BPS-Resetzeit" /> <!-- Reset Time -->
+
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="SC8815 设置" UIHint="Headline" />
+                <ParameterRefRef RefId="%AID%_UP-%TT%00038_R-%TT%0003801" IndentLevel="1" HelpContext="BPS-SC8815-Busstrom" /> <!-- 总线电源电流上限 -->
+                <ParameterRefRef RefId="%AID%_UP-%TT%00052_R-%TT%0005201" IndentLevel="1" HelpContext="BPS-SC8815-Frequenz" /> <!-- 开关频率 150/300/450 kHz -->
+
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="输入" UIHint="Headline" />
+                <!-- 发送开关必须无条件可见（放在 choose 之外），ETS 才能求值下面的条件 -->
+                <ParameterRefRef RefId="%AID%_UP-%TT%00042_R-%TT%0004201" IndentLevel="1" HelpContext="BPS-Eingangsspannung-senden" /> <!-- 发送总线电源输入电压 -->
+                <choose ParamRefId="%AID%_UP-%TT%00042_R-%TT%0004201">
+                  <when test="1">
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00043_R-%TT%0004301" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00044_R-%TT%0004401" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                    <ParameterBlock Id="%AID%_PB-nnn" Name="InputVoltageCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden">
+                      <Rows>
+                        <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                      </Rows>
+                      <Columns>
+                        <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                        <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                        <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                        <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                      </Columns>
+                      <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送总线电源输入电压&#10;   (0 = 不发送)" Cell="1,2" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00046_R-%TT%0004601" Cell="1,3" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00045_R-%TT%0004501" Cell="1,4" />
+                    </ParameterBlock>
+
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00012_R-%TT%0001201" /> <!-- KO 31: 总线电源输入电压 -->
+                  </when>
+                </choose>
+                <ParameterRefRef RefId="%AID%_UP-%TT%00047_R-%TT%0004701" IndentLevel="1" HelpContext="BPS-Eingangsstrom-senden" /> <!-- 发送总线电源输入电流 -->
+                <choose ParamRefId="%AID%_UP-%TT%00047_R-%TT%0004701">
+                  <when test="1">
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00048_R-%TT%0004801" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00049_R-%TT%0004901" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                    <ParameterBlock Id="%AID%_PB-nnn" Name="InputCurrentCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden">
+                      <Rows>
+                        <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                      </Rows>
+                      <Columns>
+                        <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                        <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                        <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                        <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                      </Columns>
+                      <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送总线电源输入电流&#10;   (0 = 不发送)" Cell="1,2" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00051_R-%TT%0005101" Cell="1,3" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00050_R-%TT%0005001" Cell="1,4" />
+                    </ParameterBlock>
+
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00013_R-%TT%0001301" /> <!-- KO 32: 总线电源输入电流 -->
+                  </when>
+                </choose>
+
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="输出" UIHint="Headline"/>
+                <ParameterRefRef RefId="%AID%_UP-%TT%00002_R-%TT%0000201" IndentLevel="1" HelpContext="BPS-Status-Netzteil-senden" /> <!-- 发送总线电源状态 -->
+                <choose ParamRefId="%AID%_UP-%TT%00002_R-%TT%0000201">
+                  <when test="1">
+                    <ParameterBlock Id="%AID%_PB-nnn" Name="PowerSupply1Cyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                      <Rows>
+                        <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                      </Rows>
+                      <Columns>
+                        <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                        <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                        <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                        <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                      </Columns>
+                      <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送电源1状态&#10;   (0 = 不发送)" Cell="1,2" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00011_R-%TT%0001101" Cell="1,3" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00010_R-%TT%0001001" Cell="1,4" />
+                    </ParameterBlock>
+
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00001_R-%TT%0000101" />
+                  </when>
+                </choose>
+                <!-- 发送电源2状态（00003 + KO 21）已移到“SC8815 辅助电源”页面，改名为“发送辅助电源状态” -->
+                <ParameterRefRef RefId="%AID%_UP-%TT%00004_R-%TT%0000401" IndentLevel="1" HelpContext="BPS-Busspannung-senden" /> <!-- Bus Voltage -->
+                <choose ParamRefId="%AID%_UP-%TT%00004_R-%TT%0000401">
+                  <when test="1">
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00014_R-%TT%0001401" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00015_R-%TT%0001501" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                    <ParameterBlock Id="%AID%_PB-nnn" Name="BusVoltageCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                      <Rows>
+                        <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                      </Rows>
+                      <Columns>
+                        <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                        <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                        <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                        <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                      </Columns>
+                      <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送总线电压&#10;   (0 = 不发送)" Cell="1,2" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00017_R-%TT%0001701" Cell="1,3" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00016_R-%TT%0001601" Cell="1,4" />
+                    </ParameterBlock>
+
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00004_R-%TT%0000401" />
+                  </when>
+                </choose>
+                <ParameterRefRef RefId="%AID%_UP-%TT%00005_R-%TT%0000501" IndentLevel="1" HelpContext="BPS-Busstrom-senden" /> <!-- Bus Current -->
+                <choose ParamRefId="%AID%_UP-%TT%00005_R-%TT%0000501">
+                  <when test="1">
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00018_R-%TT%0001801" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00019_R-%TT%0001901" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                    <ParameterBlock Id="%AID%_PB-nnn" Name="BusCurrentCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                      <Rows>
+                        <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                      </Rows>
+                      <Columns>
+                        <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                        <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                        <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                        <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                      </Columns>
+                      <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送总线电流&#10;   (0 = 不发送)" Cell="1,2" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00021_R-%TT%0002101" Cell="1,3" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00020_R-%TT%0002001" Cell="1,4" />
+                    </ParameterBlock>
+
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00005_R-%TT%0000501" />
+                  </when>
+                </choose>
+                <ParameterRefRef RefId="%AID%_UP-%TT%00006_R-%TT%0000601" IndentLevel="1" HelpContext="BPS-Busauslastung-senden" /> <!-- Bus Load -->
+                <choose ParamRefId="%AID%_UP-%TT%00006_R-%TT%0000601">
+                  <when test="1">
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00022_R-%TT%0002201" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00023_R-%TT%0002301" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                    <ParameterBlock Id="%AID%_PB-nnn" Name="BusLoadCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                      <Rows>
+                        <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                      </Rows>
+                      <Columns>
+                        <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                        <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                        <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                        <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                      </Columns>
+                      <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送总线负载&#10;   (0 = 不发送)" Cell="1,2" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00025_R-%TT%0002501" Cell="1,3" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00024_R-%TT%0002401" Cell="1,4" />
+                    </ParameterBlock>
+
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00006_R-%TT%0000601" />
+                  </when>
+                </choose>
+                <!-- 辅助电压/电流的设置与上报已移到通道 2：SC8815 辅助电源 -->
+                <ParameterRefRef RefId="%AID%_UP-%TT%00009_R-%TT%0000901" IndentLevel="1" HelpContext="BPS-Temperatur-senden" /> <!-- 发送总线电源温度 -->
+                <choose ParamRefId="%AID%_UP-%TT%00009_R-%TT%0000901">
+                  <when test="1">
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00034_R-%TT%0003401" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00035_R-%TT%0003501" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                    <ParameterBlock Id="%AID%_PB-nnn" Name="TemperatureCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                      <Rows>
+                        <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                      </Rows>
+                      <Columns>
+                        <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                        <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                        <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                        <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                      </Columns>
+                      <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送总线电源温度&#10;   (0 = 不发送)" Cell="1,2" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00037_R-%TT%0003701" Cell="1,3" />
+                      <ParameterRefRef RefId="%AID%_UP-%TT%00036_R-%TT%0003601" Cell="1,4" />
+                    </ParameterBlock>
+
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00009_R-%TT%0000901" /> <!-- 总线电源温度 -->
+                  </when>
+                </choose>
+
+                <ComObjectRefRef RefId="%AID%_O-%TT%00003_R-%TT%0000301" /> <!-- Bus Reset -->
+                <ComObjectRefRef RefId="%AID%_O-%TT%00010_R-%TT%0001001" /> <!-- KO 29: 总线电源 SC8815 运行状态 -->
+                <ComObjectRefRef RefId="%AID%_O-%TT%00011_R-%TT%0001101" /> <!-- KO 30: 总线电源 SC8815 故障代码 -->
+              </ParameterBlock>
+
+              <!-- ============ 页面 2：SC8815 辅助电源 ============
+                   使能开关（沿用参数 00041）必须无条件可见，ETS 才能求值下面的条件；
+                   使能关闭时，辅助电源的设置与通信对象全部隐藏。 -->
+              <ParameterBlock Id="%AID%_PB-nnn" Name="AuxSettings" Text="SC8815 辅助电源" Icon="cog-outline" ShowInComObjectTree="true">
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="SC8815 辅助电源 版本 %ModuleVersion%" UIHint="Headline" />
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="" UIHint="HorizontalRuler" />
+
+                <ParameterSeparator Id="%AID%_PS-nnn" Text="使能" UIHint="Headline" />
+                <ParameterRefRef RefId="%AID%_UP-%TT%00041_R-%TT%0004101" IndentLevel="1" HelpContext="BPS-SC8815-Aktiv" /> <!-- SC8815 辅助电源使能 -->
+
+                <choose ParamRefId="%AID%_UP-%TT%00041_R-%TT%0004101">
+                  <when test="1">
+                    <ParameterSeparator Id="%AID%_PS-nnn" Text="SC8815 设置" UIHint="Headline" />
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00039_R-%TT%0003901" IndentLevel="1" HelpContext="BPS-SC8815-Hilfsspannung" /> <!-- 辅助电源电压 -->
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00040_R-%TT%0004001" IndentLevel="1" HelpContext="BPS-SC8815-Hilfsstrom" /> <!-- 辅助电源电流 -->
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00068_R-%TT%0006801" IndentLevel="1" HelpContext="BPS-SC8815-Hilfsfrequenz" /> <!-- 开关频率 -->
+
+                    <ParameterSeparator Id="%AID%_PS-nnn" Text="输入" UIHint="Headline" />
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00058_R-%TT%0005801" IndentLevel="1" HelpContext="BPS-Hilfseingangsspannung-senden" /> <!-- 发送辅助电源输入电压 -->
+                    <choose ParamRefId="%AID%_UP-%TT%00058_R-%TT%0005801">
+                      <when test="1">
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00059_R-%TT%0005901" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00060_R-%TT%0006001" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                        <ParameterBlock Id="%AID%_PB-nnn" Name="AuxInputVoltageCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden">
+                          <Rows>
+                            <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                          </Rows>
+                          <Columns>
+                            <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                            <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                            <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                            <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                          </Columns>
+                          <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送辅助电源输入电压&#10;   (0 = 不发送)" Cell="1,2" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00062_R-%TT%0006201" Cell="1,3" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00061_R-%TT%0006101" Cell="1,4" />
+                        </ParameterBlock>
+
+                        <ComObjectRefRef RefId="%AID%_O-%TT%00015_R-%TT%0001501" /> <!-- KO 34: 辅助电源输入电压 -->
+                      </when>
+                    </choose>
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00063_R-%TT%0006301" IndentLevel="1" HelpContext="BPS-Hilfseingangsstrom-senden" /> <!-- 发送辅助电源输入电流 -->
+                    <choose ParamRefId="%AID%_UP-%TT%00063_R-%TT%0006301">
+                      <when test="1">
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00064_R-%TT%0006401" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00065_R-%TT%0006501" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                        <ParameterBlock Id="%AID%_PB-nnn" Name="AuxInputCurrentCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden">
+                          <Rows>
+                            <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                          </Rows>
+                          <Columns>
+                            <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                            <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                            <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                            <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                          </Columns>
+                          <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送辅助电源输入电流&#10;   (0 = 不发送)" Cell="1,2" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00067_R-%TT%0006701" Cell="1,3" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00066_R-%TT%0006601" Cell="1,4" />
+                        </ParameterBlock>
+
+                        <ComObjectRefRef RefId="%AID%_O-%TT%00016_R-%TT%0001601" /> <!-- KO 35: 辅助电源输入电流 -->
+                      </when>
+                    </choose>
+
+                    <ParameterSeparator Id="%AID%_PS-nnn" Text="输出" UIHint="Headline" />
+
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00003_R-%TT%0000301" IndentLevel="1" HelpContext="BPS-Status-Hilfsnetzteil-senden" /> <!-- 发送辅助电源状态 -->
+                    <choose ParamRefId="%AID%_UP-%TT%00003_R-%TT%0000301">
+                      <when test="1">
+                        <ParameterBlock Id="%AID%_PB-nnn" Name="PowerSupply2Cyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                          <Rows>
+                            <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                          </Rows>
+                          <Columns>
+                            <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                            <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                            <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                            <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                          </Columns>
+                          <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送辅助电源状态&#10;   (0 = 不发送)" Cell="1,2" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00013_R-%TT%0001301" Cell="1,3" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00012_R-%TT%0001201" Cell="1,4" />
+                        </ParameterBlock>
+
+                        <ComObjectRefRef RefId="%AID%_O-%TT%00002_R-%TT%0000201" /> <!-- KO 21: 辅助电源状态 -->
+                      </when>
+                    </choose>
+
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00007_R-%TT%0000701" IndentLevel="1" HelpContext="BPS-Hilfsspannung-senden" /> <!-- 发送辅助电压 -->
+                    <choose ParamRefId="%AID%_UP-%TT%00007_R-%TT%0000701">
+                      <when test="1">
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00026_R-%TT%0002601" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00027_R-%TT%0002701" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                        <ParameterBlock Id="%AID%_PB-nnn" Name="AUXVoltageCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                          <Rows>
+                            <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                          </Rows>
+                          <Columns>
+                            <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                            <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                            <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                            <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                          </Columns>
+                          <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送辅助电压&#10;   (0 = 不发送)" Cell="1,2" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00029_R-%TT%0002901" Cell="1,3" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00028_R-%TT%0002801" Cell="1,4" />
+                        </ParameterBlock>
+
+                        <ComObjectRefRef RefId="%AID%_O-%TT%00007_R-%TT%0000701" /> <!-- KO 26: 辅助电压 -->
+                      </when>
+                    </choose>
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00008_R-%TT%0000801" IndentLevel="1" HelpContext="BPS-Hilfsstrom-senden" /> <!-- 发送辅助电流 -->
+                    <choose ParamRefId="%AID%_UP-%TT%00008_R-%TT%0000801">
+                      <when test="1">
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00030_R-%TT%0003001" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00031_R-%TT%0003101" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                        <ParameterBlock Id="%AID%_PB-nnn" Name="AUXCurrentCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                          <Rows>
+                            <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                          </Rows>
+                          <Columns>
+                            <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                            <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                            <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                            <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                          </Columns>
+                          <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送辅助电流&#10;   (0 = 不发送)" Cell="1,2" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00033_R-%TT%0003301" Cell="1,3" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00032_R-%TT%0003201" Cell="1,4" />
+                        </ParameterBlock>
+
+                        <ComObjectRefRef RefId="%AID%_O-%TT%00008_R-%TT%0000801" /> <!-- KO 27: 辅助电流 -->
+                      </when>
+                    </choose>
+
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00069_R-%TT%0006901" IndentLevel="1" HelpContext="BPS-Hilfsauslastung-senden" /> <!-- 发送辅助电源负载 -->
+                    <choose ParamRefId="%AID%_UP-%TT%00069_R-%TT%0006901">
+                      <when test="1">
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00070_R-%TT%0007001" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00071_R-%TT%0007101" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                        <ParameterBlock Id="%AID%_PB-nnn" Name="AUXLoadCyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden"> <!-- cyclic pattern -->
+                          <Rows>
+                            <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                          </Rows>
+                          <Columns>
+                            <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                            <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                            <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                            <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                          </Columns>
+                          <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送辅助电源负载&#10;   (0 = 不发送)" Cell="1,2" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00073_R-%TT%0007301" Cell="1,3" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00072_R-%TT%0007201" Cell="1,4" />
+                        </ParameterBlock>
+
+                        <ComObjectRefRef RefId="%AID%_O-%TT%00019_R-%TT%0001901" /> <!-- KO 38: 辅助电源负载 -->
+                      </when>
+                    </choose>
+
+                    <ParameterRefRef RefId="%AID%_UP-%TT%00053_R-%TT%0005301" IndentLevel="1" HelpContext="BPS-Temperatur2-senden" /> <!-- 发送辅助电源温度 -->
+                    <choose ParamRefId="%AID%_UP-%TT%00053_R-%TT%0005301">
+                      <when test="1">
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00054_R-%TT%0005401" IndentLevel="2" HelpContext="BPS-Mindestaenderung-relativ" />
+                        <ParameterRefRef RefId="%AID%_UP-%TT%00055_R-%TT%0005501" IndentLevel="2" HelpContext="BPS-Mindestaenderung-absolut" />
+                        <ParameterBlock Id="%AID%_PB-nnn" Name="Temperature2Cyclic" Inline="true" Layout="Grid" HelpContext="BPS-Status-zyklisch-senden">
+                          <Rows>
+                            <Row Id="%AID%_PB-nnn_R-1" Name="Row1" />
+                          </Rows>
+                          <Columns>
+                            <Column Id="%AID%_PB-nnn_C-1" Name="Col1" Width="1%" />
+                            <Column Id="%AID%_PB-nnn_C-2" Name="Col2" Width="44%" />
+                            <Column Id="%AID%_PB-nnn_C-3" Name="Col3" Width="15%" />
+                            <Column Id="%AID%_PB-nnn_C-4" Name="Col4" Width="20%" />
+                          </Columns>
+                          <ParameterSeparator Id="%AID%_PS-nnn" Text="   周期发送辅助电源温度&#10;   (0 = 不发送)" Cell="1,2" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00057_R-%TT%0005701" Cell="1,3" />
+                          <ParameterRefRef RefId="%AID%_UP-%TT%00056_R-%TT%0005601" Cell="1,4" />
+                        </ParameterBlock>
+
+                        <ComObjectRefRef RefId="%AID%_O-%TT%00014_R-%TT%0001401" /> <!-- KO 33: 辅助电源温度 -->
+                      </when>
+                    </choose>
+
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00017_R-%TT%0001701" /> <!-- KO 36: 辅助电源运行状态 -->
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00018_R-%TT%0001801" /> <!-- KO 37: 辅助电源故障代码 -->
+                    <ComObjectRefRef RefId="%AID%_O-%TT%00020_R-%TT%0002001" /> <!-- KO 39: 辅助电源复位（写入 1 触发复位） -->
+                  </when>
+                </choose>
+              </ParameterBlock>
+            </Channel>
+          </Dynamic>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+      <Baggages>
+        <Baggage TargetPath="" Name="Help_de.zip" Id="%FILE-HELP-de%">
+          <FileInfo TimeInfo="%DATETIME%" />
+        </Baggage>
+        <Baggage TargetPath="" Name="Icons.zip" Id="%FILE-ICONS%">
+          <FileInfo TimeInfo="%DATETIME%" />
+        </Baggage>
+      </Baggages>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>
