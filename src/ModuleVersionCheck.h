@@ -1,9 +1,9 @@
 #include "versions.h"
 
 // Change the following 3 lines and adopt to your module names
-#define ModuleVersion_ModuleName "SC8815PowerSupply"
+#define ModuleVersion_ModuleName "BusPowerSupply"
 #define ModuleVersion_knxprod_h BPS_ModuleVersion
-#define ModuleVersion_version_h MODULE_SC8815PowerSupply_ETS
+#define ModuleVersion_version_h MODULE_BusPowerSupply_ETS
 
 // ATTENTION: This file is evaluated during build, by OpenKNXproducer and some build scripts.
 // No changes needed behind this point
