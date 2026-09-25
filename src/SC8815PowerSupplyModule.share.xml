@@ -698,7 +698,7 @@
         </ApplicationProgram>
       </ApplicationPrograms>
       <Baggages>
-        <Baggage TargetPath="" Name="Help_cn.zip" Id="%FILE-HELP-de%">
+        <Baggage TargetPath="" Name="Help_cn.zip" Id="%FILE-HELP-cn%">
           <FileInfo TimeInfo="%DATETIME%" />
         </Baggage>
         <Baggage TargetPath="" Name="Icons.zip" Id="%FILE-ICONS%">

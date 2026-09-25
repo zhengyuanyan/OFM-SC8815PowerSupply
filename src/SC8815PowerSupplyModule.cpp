@@ -1,6 +1,19 @@
 #include "SC8815PowerSupplyModule.h"
 #include "ModuleVersionCheck.h"
 
+// 可选依赖：蜂鸣器报警模块（lib/OFM-BuzzerAlert）。没有这个库时本模块照常工作，
+// 只是不推故障给蜂鸣器。
+#if __has_include("BuzzerAlertModule.h")
+    #include "BuzzerAlertModule.h"
+    #define BPS_HAS_BUZZER_ALERT 1
+#endif
+
+// 可选依赖：显示屏模块（lib/OFM-PowerSupplyDisplay）。没有这个库时本模块照常工作。
+#if __has_include("PowerSupplyDisplayModule.h")
+    #include "PowerSupplyDisplayModule.h"
+    #define BPS_HAS_POWER_SUPPLY_DISPLAY 1
+#endif
+
 BusPowerSupplyModule openknxBusPowerSupplyModule;
 
 // 过流/短路等故障后的重试等待时间(ms)，超出后一直使用最后一个值
@@ -175,6 +188,23 @@ void BusPowerSupplyModule::loop(bool configured)
 
     updateUnit(_bus, now);
     updateUnit(_aux, now);
+
+#ifdef BPS_HAS_BUZZER_ALERT
+    // 把两路的故障代码推给蜂鸣器报警模块：
+    //   bit0..7  = 总线侧 BpsFault 位，bit8..15 = 辅助侧 BpsFault 位
+    // （与 BuzzerAlertSource 的顺序一致）
+    openknxBuzzerAlertModule.setFaults((uint16_t)_bus.faultCode | ((uint16_t)_aux.faultCode << 8));
+#endif
+
+#ifdef BPS_HAS_POWER_SUPPLY_DISPLAY
+    // 把两路的测量值与故障位推给显示屏模块
+    openknxPowerSupplyDisplayModule.setUnit(false, _bus.chipOk, _bus.inaOk, _bus.tempOk, _bus.outputOn,
+                                           _bus.inputVoltage_mV, _bus.inputCurrent_mA, _bus.outputVoltage_mV,
+                                           _bus.outputCurrent_mA, _bus.temperatureC, _bus.faultCode);
+    openknxPowerSupplyDisplayModule.setUnit(true, _aux.chipOk, _aux.inaOk, _aux.tempOk, _aux.outputOn,
+                                           _aux.inputVoltage_mV, _aux.inputCurrent_mA, _aux.outputVoltage_mV,
+                                           _aux.outputCurrent_mA, _aux.temperatureC, _aux.faultCode);
+#endif
 
     if (configured)
     {
