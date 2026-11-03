@@ -112,6 +112,11 @@ const std::string BusPowerSupplyModule::version()
 
 void BusPowerSupplyModule::setup(bool configured)
 {
+
+    OPENKNX_GPIO_WIRE.setSDA(OPENKNX_GPIO_SDA);
+    OPENKNX_GPIO_WIRE.setSCL(OPENKNX_GPIO_SCL);
+    OPENKNX_GPIO_WIRE.begin();
+    OPENKNX_GPIO_WIRE.setClock(OPENKNX_GPIO_CLOCK);
     // 总线侧 I2C 由 OpenKNX GPIO Manager 初始化，辅助侧在这里初始化
     OPENKNX_GPIO_WIRE1.setSDA(OPENKNX_GPIO_SDA1);
     OPENKNX_GPIO_WIRE1.setSCL(OPENKNX_GPIO_SCL1);
@@ -199,11 +204,11 @@ void BusPowerSupplyModule::loop(bool configured)
 #ifdef BPS_HAS_POWER_SUPPLY_DISPLAY
     // 把两路的测量值与故障位推给显示屏模块
     openknxPowerSupplyDisplayModule.setUnit(false, _bus.chipOk, _bus.inaOk, _bus.tempOk, _bus.outputOn,
-                                           _bus.inputVoltage_mV, _bus.inputCurrent_mA, _bus.outputVoltage_mV,
-                                           _bus.outputCurrent_mA, _bus.temperatureC, _bus.faultCode);
+                                            _bus.inputVoltage_mV, _bus.inputCurrent_mA, _bus.outputVoltage_mV,
+                                            _bus.outputCurrent_mA, _bus.temperatureC, _bus.faultCode);
     openknxPowerSupplyDisplayModule.setUnit(true, _aux.chipOk, _aux.inaOk, _aux.tempOk, _aux.outputOn,
-                                           _aux.inputVoltage_mV, _aux.inputCurrent_mA, _aux.outputVoltage_mV,
-                                           _aux.outputCurrent_mA, _aux.temperatureC, _aux.faultCode);
+                                            _aux.inputVoltage_mV, _aux.inputCurrent_mA, _aux.outputVoltage_mV,
+                                            _aux.outputCurrent_mA, _aux.temperatureC, _aux.faultCode);
 #endif
 
     if (configured)
@@ -335,7 +340,7 @@ void BusPowerSupplyModule::updateButton(BpsUnit &u, uint32_t now)
 
 bool BusPowerSupplyModule::configureChip(BpsUnit &u)
 {
-    if (!u.sc->begin(BPS_SHUNT_MOHM, BPS_SHUNT_MOHM, BPS_FB_RUP_KOHM, BPS_FB_RDOWN_KOHM))
+    if (!u.sc->begin(BPS_SHUNT_MOHM, BPS_SHUNT_MOHM, BPS_FB_RUP_KOHM, BPS_FB_RDOWN_KOHM, BPS_ADIN_FB_RUP_KOHM, BPS_ADIN_FB_RDOWN_KOHM))
     {
         logErrorP("%s: SC8815 not answering at 0x%02X", u.label, u.chipAddress);
         return false;
@@ -344,9 +349,9 @@ bool BusPowerSupplyModule::configureChip(BpsUnit &u)
     // VBAT 侧（输入侧电源轨）配置
     BatteryConfig battery = {};
     battery.IRCOMP = SCBAT_IRCOMP_0mR;
-    battery.VBAT_SEL = BPS_VBAT_SEL;
-    battery.CSEL = BPS_VBAT_CSEL;
-    battery.VCELL = BPS_VBAT_VCELL;
+    battery.VBAT_SEL = SCBAT_VBAT_SEL_External;
+    // battery.CSEL = BPS_VBAT_CSEL;
+    // battery.VCELL = BPS_VBAT_VCELL;
     u.sc->configBattery(battery);
 
     // 注: VBATS 外部分压决定的 VBAT 过压点不在里算 —— 芯片要 ADC 跑起来之后
@@ -698,6 +703,9 @@ void BusPowerSupplyModule::updateUnit(BpsUnit &u, uint32_t now)
  *   VBATS 比值 = 输入电压(ADIN) / VBATS 引脚电压（芯片 VBAT ADC）-> VBAT 过压点
  * 读不到时退回标称值 BPS_VBAT_DIVIDER（由 BPS_VBAT_FB_* 算），并与实测交叉校验。
  *
+ * 注: ADIN 的分压电阻已经由 configureChip() 里的 u.sc->begin(...) 写入驱动，
+ *     readAdinVoltage() 返回的就是**换算后的实际输入电压**，这里不能再乘分压比。
+ *
  * VBAT_SEL = External 时 VBATS 引脚电压与片内基准比较，且该保护在充/放电模式
  * 都生效，所以：   过压点(输入侧) = BPS_VBAT_REF_MV x VBATS 分压比
  *
@@ -705,8 +713,22 @@ void BusPowerSupplyModule::updateUnit(BpsUnit &u, uint32_t now)
  */
 void BusPowerSupplyModule::checkVbatOverVoltage(BpsUnit &u)
 {
-    // 输入电压走 ADIN；VBATS 引脚电压走芯片自己的 VBAT ADC
-    const uint32_t input_mV = (uint32_t)((float)u.sc->readAdinVoltage() * BPS_INPUT_VOLTAGE_DIVIDER);
+    // 输入电压走 ADIN（驱动内部已按分压电阻换算好）
+    const uint32_t input_mV = (uint32_t)((float)u.sc->readAdinVoltage());
+
+    // 辅助侧板上没有 VBATS 分压网络 -> 分压比/过压点无从谈起。
+    // 这一侧只上报 ADIN 输入电压，不读 VBATS 引脚、不做分压比反推、也不报过压点。
+    if (u.isAux)
+    {
+        u.vbatDivider = 0;
+        u.vbatOvp_mV = 0;
+        u.vbatOvpChecked = true;
+        logInfoP("%s: input %u mV from ADIN (no VBATS divider on this side, VBAT over voltage check skipped)", u.label,
+                 input_mV);
+        return;
+    }
+
+    // VBATS 引脚电压走芯片自己的 VBAT ADC
     const uint16_t pin_mV = u.sc->readBattVoltage();
 
     // 软件算分压比：两个读数一比就是实际比值，比写死的常量可靠，
@@ -793,7 +815,7 @@ void BusPowerSupplyModule::sampleUnit(BpsUnit &u)
         u.vbusShort = status.VBUS_SHORT;
         u.overTemperature = status.OTP;
 
-        u.inputVoltage_mV = (float)u.sc->readAdinVoltage() * BPS_INPUT_VOLTAGE_DIVIDER;
+        u.inputVoltage_mV = (float)u.sc->readAdinVoltage();
         u.inputCurrent_mA = (float)u.sc->readBattCurrent();
     }
     else
@@ -862,10 +884,10 @@ void BusPowerSupplyModule::buildEtsMap(BpsUnit &u)
                       ParamBPS_PowerSupply2SendCyclicTimeMS};
         map.voltage = {BPS_KoAuxVoltage, DPT_Value_Electric_Potential, ParamBPS_AuxVoltageChangeSend,
                        ParamBPS_AuxVoltageSendMinChangePercent, ParamBPS_AuxVoltageSendMinChangeAbsolute,
-                       ParamBPS_AuxVoltageSendCyclicTimeMS};
+                       ParamBPS_AuxVoltageSendCyclicTimeMS, 0.001f};
         map.current = {BPS_KoAuxCurrent, DPT_Value_Electric_Current, ParamBPS_AuxCurrentChangeSend,
                        ParamBPS_AuxCurrentSendMinChangePercent, ParamBPS_AuxCurrentSendMinChangeAbsolute,
-                       ParamBPS_AuxCurrentSendCyclicTimeMS};
+                       ParamBPS_AuxCurrentSendCyclicTimeMS, 0.001f};
         map.load = {BPS_KoAuxLoad, DPT_Scaling, ParamBPS_AuxLoadChangeSend, ParamBPS_AuxLoadSendMinChangePercent,
                     ParamBPS_AuxLoadSendMinChangeAbsolute, ParamBPS_AuxLoadSendCyclicTimeMS};
         map.temperature = {BPS_KoTemperature2, DPT_Value_Temp, ParamBPS_AuxTemperatureChangeSend,
@@ -873,10 +895,10 @@ void BusPowerSupplyModule::buildEtsMap(BpsUnit &u)
                            ParamBPS_AuxTemperatureSendCyclicTimeMS};
         map.inputVoltage = {BPS_KoAuxInputVoltage, DPT_Value_Electric_Potential, ParamBPS_AuxInputVoltageChangeSend,
                             ParamBPS_AuxInputVoltageSendMinChangePercent, ParamBPS_AuxInputVoltageSendMinChangeAbsolute,
-                            ParamBPS_AuxInputVoltageSendCyclicTimeMS};
+                            ParamBPS_AuxInputVoltageSendCyclicTimeMS, 0.001f};
         map.inputCurrent = {BPS_KoAuxInputCurrent, DPT_Value_Electric_Current, ParamBPS_AuxInputCurrentChangeSend,
                             ParamBPS_AuxInputCurrentSendMinChangePercent, ParamBPS_AuxInputCurrentSendMinChangeAbsolute,
-                            ParamBPS_AuxInputCurrentSendCyclicTimeMS};
+                            ParamBPS_AuxInputCurrentSendCyclicTimeMS, 0.001f};
         // 诊断量没有 ETS 参数：值变化就发送
         map.chipStatus = {BPS_KoAuxSC8815Status, DPT_Switch, true, 0, 0, 0};
         map.errorCode = {BPS_KoAuxSC8815ErrorCode, DPT_Value_1_Ucount, true, 0, 0, 0};
@@ -887,10 +909,10 @@ void BusPowerSupplyModule::buildEtsMap(BpsUnit &u)
                       ParamBPS_PowerSupply1SendCyclicTimeMS};
         map.voltage = {BPS_KoBusVoltage, DPT_Value_Electric_Potential, ParamBPS_BusVoltageChangeSend,
                        ParamBPS_BusVoltageSendMinChangePercent, ParamBPS_BusVoltageSendMinChangeAbsolute,
-                       ParamBPS_BusVoltageSendCyclicTimeMS};
+                       ParamBPS_BusVoltageSendCyclicTimeMS, 0.001f};
         map.current = {BPS_KoBusCurrent, DPT_Value_Electric_Current, ParamBPS_BusCurrentChangeSend,
                        ParamBPS_BusCurrentSendMinChangePercent, ParamBPS_BusCurrentSendMinChangeAbsolute,
-                       ParamBPS_BusCurrentSendCyclicTimeMS};
+                       ParamBPS_BusCurrentSendCyclicTimeMS, 0.001f};
         map.load = {BPS_KoBusLoad, DPT_Scaling, ParamBPS_BusLoadChangeSend, ParamBPS_BusLoadSendMinChangePercent,
                     ParamBPS_BusLoadSendMinChangeAbsolute, ParamBPS_BusLoadSendCyclicTimeMS};
         map.temperature = {BPS_KoTemperature, DPT_Value_Temp, ParamBPS_TemperatureChangeSend,
@@ -898,10 +920,10 @@ void BusPowerSupplyModule::buildEtsMap(BpsUnit &u)
                            ParamBPS_TemperatureSendCyclicTimeMS};
         map.inputVoltage = {BPS_KoInputVoltage, DPT_Value_Electric_Potential, ParamBPS_InputVoltageChangeSend,
                             ParamBPS_InputVoltageSendMinChangePercent, ParamBPS_InputVoltageSendMinChangeAbsolute,
-                            ParamBPS_InputVoltageSendCyclicTimeMS};
+                            ParamBPS_InputVoltageSendCyclicTimeMS, 0.001f};
         map.inputCurrent = {BPS_KoInputCurrent, DPT_Value_Electric_Current, ParamBPS_InputCurrentChangeSend,
                             ParamBPS_InputCurrentSendMinChangePercent, ParamBPS_InputCurrentSendMinChangeAbsolute,
-                            ParamBPS_InputCurrentSendCyclicTimeMS};
+                            ParamBPS_InputCurrentSendCyclicTimeMS, 0.001f};
         map.chipStatus = {BPS_KoSC8815Status, DPT_Switch, true, 0, 0, 0};
         map.errorCode = {BPS_KoSC8815ErrorCode, DPT_Value_1_Ucount, true, 0, 0, 0};
     }
@@ -915,6 +937,10 @@ void BusPowerSupplyModule::sendValue(const BpsEtsQuantity &quantity, BpsSendStat
     GroupObject &ko = knx.getGroupObject(quantity.ko);
     const Dpt &dpt = quantity.dpt;
 
+
+    const uint32_t throttleMS = (quantity.cyclicMS > 0) ? quantity.cyclicMS : (uint32_t)BPS_ETS_MIN_SEND_INTERVAL_MS;
+    const bool sendAllowed = !state.sent || delayCheckMillis(state.timer, throttleMS);
+
     const float difference = fabsf(value - state.last);
 
     if (difference > 0.0f)
@@ -923,23 +949,26 @@ void BusPowerSupplyModule::sendValue(const BpsEtsQuantity &quantity, BpsSendStat
                                 (difference >= fabsf(state.last) * (float)quantity.minPercent / 100.0f);
         const bool absoluteOk = (quantity.minAbsolute <= 0) || (difference >= (float)quantity.minAbsolute);
 
-        if (relativeOk && absoluteOk)
+        if (relativeOk && absoluteOk && sendAllowed)
         {
-            ko.value(value, dpt);
+            ko.value(value * quantity.scale, dpt);
             state.last = value;
+            state.timer = delayTimerInit();
+            state.sent = true;
         }
         else
         {
-            // 变化太小：只更新内部值，不发送
-            ko.valueNoSend(value, dpt);
+
+            ko.valueNoSend(value * quantity.scale, dpt);
         }
     }
 
     if (quantity.cyclicMS > 0 && delayCheckMillis(state.timer, quantity.cyclicMS))
     {
-        ko.value(value, dpt);
+        ko.value(value * quantity.scale, dpt);
         state.last = value;
         state.timer = delayTimerInit();
+        state.sent = true;
     }
 }
 

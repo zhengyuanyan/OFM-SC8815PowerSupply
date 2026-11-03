@@ -66,6 +66,11 @@
 #define BPS_BUTTON_DEBOUNCE_MS 30        // 外部复位按键去抖时间
 #define BPS_BUTTON_HOLD_MS 3000          // 外部复位按键长按触发时间（不足 3 s 的短按不动输出）
 
+// 变化发送的最小间隔：ETS 里给该对象设了周期发送时间就用它（各数据可不同），
+// 没启用周期发送（0 = 不周期发送）时用这个固定下限。
+// 没有它的话，SC8815 输入电流那种 ±1~2 LSB 的抖动会让每个采样周期(500 ms)都触发一次发送。
+#define BPS_ETS_MIN_SEND_INTERVAL_MS 1000
+
 // ---------------------------------------------------------------------------
 //  电气配置（必须与实际硬件一致）
 // ---------------------------------------------------------------------------
@@ -79,7 +84,7 @@
 // 可测上限 = 2048mV x 21 = 43 V，覆盖 32 V 有余。
 // 注意: ADIN 与 VBATS 是**两套互相独立的分压网络**, 各自的电阻在下面分别填。
 #define BPS_ADIN_FB_RUP_KOHM 200.0   // ADIN 分压上电阻
-#define BPS_ADIN_FB_RDOWN_KOHM 10.0  // ADIN 分压下电阻
+#define BPS_ADIN_FB_RDOWN_KOHM 13.3  // ADIN 分压下电阻
 #define BPS_INPUT_VOLTAGE_DIVIDER (1.0f + (float)BPS_ADIN_FB_RUP_KOHM / (float)BPS_ADIN_FB_RDOWN_KOHM) // = 21
 
 // 输入欠压/过压门限取额定范围(18..32 V)端点：
@@ -135,12 +140,17 @@
 // 两者差超过 BPS_VBAT_PIN_TOLERANCE_PERCENT 会告警（常量与板子不符）。
 // 输入电压由 ADIN 读出，引脚电压 = 输入电压 / 分压比，两者一比就知道离跳闸还有多少余量。
 // BPS_VBAT_REF_MV 是唯一无法测出来的量（芯片内部基准 1.2V），取自手册。
+//
+// 注意：**辅助电源那侧板上没有 VBATS 分压网络**，因此 checkVbatOverVoltage()
+// 对辅助侧直接跳过（只取 ADIN 输入电压，不算分压比、不报过压点）。
+// ADIN 的分压电阻已由 u.sc->begin(...) 写入驱动，readAdinVoltage() 返回的
+// 就是换算后的实际电压，调用处不要再乘 BPS_INPUT_VOLTAGE_DIVIDER。
 #define BPS_VBAT_SEL SCBAT_VBAT_SEL_External
 #define BPS_VBAT_CSEL SCBAT_CSEL_4S    // 外部设定下不起作用（保留以随驱动一并下发）
 #define BPS_VBAT_VCELL SCBAT_VCELL_4v2 // 外部设定下不起作用（保留以随驱动一并下发）
 #define BPS_VBAT_REF_MV 1200           // 手册: VBATS 外部分压的参考基准 = 1.2V
-#define BPS_VBAT_FB_RUP_KOHM 200.0     // VBATS 分压上电阻（独立于 BPS_ADIN_FB_*）
-#define BPS_VBAT_FB_RDOWN_KOHM 6.8     // VBATS 分压下电阻（按 18..32 V 输入算, 见上）
+#define BPS_VBAT_FB_RUP_KOHM 220.0     // VBATS 分压上电阻（独立于 BPS_ADIN_FB_*）
+#define BPS_VBAT_FB_RDOWN_KOHM 8.06     // VBATS 分压下电阻（按 18..32 V 输入算, 见上）
 #define BPS_VBAT_DIVIDER (1.0f + (float)BPS_VBAT_FB_RUP_KOHM / (float)BPS_VBAT_FB_RDOWN_KOHM)
 #define BPS_VBAT_PIN_TOLERANCE_PERCENT 15 // 标称与实测分压比允许的偏差（超过则告警）
 // VBUS 反馈：输出需要 24~30V, 内部基准(VBUSREF_I)最大只能到约 25.6V,
@@ -174,8 +184,9 @@ enum BpsFault : uint8_t
 // 某个通信对象的发送状态
 struct BpsSendState
 {
-    float last = 0.0f; // 上次发送的值
-    uint32_t timer = 0;
+    float last = 0.0f; // 上次发送的值（内部单位 mV/mA/...）
+    uint32_t timer = 0;  // 上次发送的时刻（节流 + 周期发送共用）
+    bool sent = false;   // 是否已发送过：首次发送不受节流限制
 };
 
 // 一个通信对象的发送配置（KO 编号 + 数据类型 + 发送条件）
@@ -185,8 +196,11 @@ struct BpsEtsQuantity
     Dpt dpt;                 // 数值类型（default 构造为无效值，统一在表中指定）
     bool send = false;       // ETS：是否发送
     uint8_t minPercent = 0;  // ETS：相对最小变化量（%）
-    int16_t minAbsolute = 0; // ETS：绝对最小变化量
+    int16_t minAbsolute = 0; // ETS：绝对最小变化量（与内部单位一致: mV / mA / % / °C）
     uint32_t cyclicMS = 0;   // ETS：周期发送时间（ms，0 = 不周期发送）
+    // 发送到总线时的缩放：内部值(mV/mA) -> DPT 单位。
+    // DPT 14.027 = 电压(V)、DPT 14.019 = 电流(A)，因此这两类必须填 0.001。
+    float scale = 1.0f;
 };
 
 // 一路输出的全部 ETS 绑定（每侧一份，启动时由 buildEtsMap() 填好）
@@ -254,8 +268,8 @@ struct BpsUnit
     uint8_t faultCode = 0;
 
     // ---- 输入侧 VBATS 分压/过压点（软件算出，见 checkVbatOverVoltage()）----
-    uint32_t vbatOvp_mV = 0;      // 算出的 VBAT 过压点；0 = 还没算出来
-    uint16_t vbatDivider = 0;     // 软件算出的 VBATS 分压比（实际用的那个）
+    uint32_t vbatOvp_mV = 0;      // 算出的 VBAT 过压点；0 = 还没算出来 / 该侧没有 VBATS 分压
+    uint16_t vbatDivider = 0;     // 软件算出的 VBATS 分压比（实际用的那个；0 = 该侧无分压）
     bool vbatOvpChecked = false;  // 已经算过一次（不管成功与否）
 
     // ---- PSTOP（由固件主动拉低 ALERT 强制拉高，见 setPstop()）----
@@ -343,7 +357,7 @@ class BusPowerSupplyModule : public OpenKNX::Module
     void buildEtsMap(BpsUnit &u); // 只填传入这一侧的表：_bus 填总线, _aux 填辅助
     void updateUnit(BpsUnit &u, uint32_t now);
     void sampleUnit(BpsUnit &u);
-    void checkVbatOverVoltage(BpsUnit &u); // 读 SC8815 反推 VBATS 分压比并校验过压点
+    void checkVbatOverVoltage(BpsUnit &u); // 总线侧：反推 VBATS 分压比并校验过压点（辅助侧只取 ADIN 电压）
 
     // ---- ETS ----
     void sendUnitValues(BpsUnit &u);
