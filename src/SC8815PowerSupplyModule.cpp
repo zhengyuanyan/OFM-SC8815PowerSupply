@@ -255,7 +255,7 @@ void BusPowerSupplyModule::initPins(BpsUnit &u)
     openknx.gpio.pinMode(u.intPin, INPUT_PULLUP);
     openknx.gpio.pinMode(u.alertPin, INPUT_PULLUP);
 
-    // 外部复位按键（上拉输入, 低 = 按下, 需长按 3 s 以上）与锁存器 CLR / 芯片使能引脚
+    // 外部复位按键（上拉输入, 低 = 按下, 去抖后按下即触发复位）与锁存器 CLR / 芯片使能引脚
     openknx.gpio.pinMode(u.resetPin, INPUT_PULLUP);
     openknx.gpio.pinMode(u.clrPin, OUTPUT, true, !u.clrActive);
     openknx.gpio.pinMode(u.cePin, OUTPUT, true, !u.ceActive);
@@ -286,12 +286,13 @@ bool BusPowerSupplyModule::readButton(BpsUnit &u)
 }
 
 /**
- * @brief 按键处理：去抖 + 长按判定
+ * @brief 按键处理：去抖 + 长按（BPS_BUTTON_HOLD_MS = 3 s）判定
  *
- * 复位按键必须连续按住 BPS_BUTTON_HOLD_MS（3 s）以上才触发该路复位；
- * 短按（含误碰）只记一条日志，不动输出——总线电源是给 KNX 供电的，
- * 不能一碰就断。
- * 触发后若继续按住，updateUnit() 会把复位顺延（相当于一直按着前面板按键）。
+ * 复位按键必须连续按住 3 s 以上才触发该路复位，短按（含误碰）只记一条日志、不动输出
+ * ——总线电源是给 KNX 供电的，不能一碰就断。
+ * 长按触发后立刻断电（PGATE + OTG 关断），松开起计该路 ETS“复位时间”，
+ * 时间到完整重启恢复供电；触发后若继续按住，updateUnit() 会把复位顺延，
+ * 相当于一直按着前面板按键（一直断电）。
  */
 void BusPowerSupplyModule::updateButton(BpsUnit &u, uint32_t now)
 {
@@ -529,8 +530,12 @@ void BusPowerSupplyModule::startReset(BpsUnit &u, uint32_t durationMS, bool from
         return;
     }
 
-    // 只断开输出通路（PGATE），芯片保持工作，复位结束后可直接恢复输出
-    setOutputPath(u, false);
+    // 立刻断电，保证复位期间输出真的没有电压：
+    //   1) setPgateEnable(false)：PGATE 关断外部 PMOS（输出通路断开）
+    //   2) setOtgEnable(false)：停止开关变换，VBUS 掉电（避免 PMOS 体二极管等路径
+    //      继续把 VBUS 送到输出，导致万用表仍能量到电压）
+    // 复位时间到后走 startUnit() 完整重启（重新配置芯片 + 打开 PGATE）恢复供电。
+    disableOutput(u);
 
     u.resetTimer = delayTimerInit();
     u.resetDurationMS = durationMS;
@@ -538,7 +543,8 @@ void BusPowerSupplyModule::startReset(BpsUnit &u, uint32_t durationMS, bool from
     u.retryCount = 0;
     u.retryTimer = 0;
 
-    logInfoP("%s: reset started (%s), output off for %u ms", u.label, fromButton ? "button" : "group object", durationMS);
+    logInfoP("%s: reset started (%s), PGATE off + OTG off, output off for %u ms", u.label,
+             fromButton ? "button" : "group object", durationMS);
 }
 
 /* ===========================================================================
@@ -553,21 +559,24 @@ void BusPowerSupplyModule::applyParameters(bool configured)
     _bus.currentLimit_mA = configured ? ParamBPS_SC8815BusCurrent : 640;
     _bus.frequencyKHz = configured ? ParamBPS_SC8815Frequency : 300;
 
-    // 复位时间：share.xml 只有一个“复位时间”参数, 总线与辅助共用
-    _resetTimeSeconds = configured ? (uint8_t)ParamBPS_ResetTime : 10;
-    if (_resetTimeSeconds == 0)
-        _resetTimeSeconds = 1;
+    // 复位时间：总线 00001 / 辅助 00074 各自独立，互不影响
+    _bus.resetTimeSeconds = configured ? (uint8_t)ParamBPS_ResetTime : 10;
+    if (_bus.resetTimeSeconds == 0)
+        _bus.resetTimeSeconds = 1;
 
-    // 辅助电源：使能/电压/限流/频率均可参数化
+    // 辅助电源：使能/电压/限流/频率/复位时间均可参数化
     _aux.enabled = configured ? ParamBPS_SC8815AuxEnabled : false;
     _aux.targetVoltage_mV = (uint16_t)(configured ? ParamBPS_SC8815AuxVoltage : 24) * 1000;
     _aux.currentLimit_mA = configured ? ParamBPS_SC8815AuxCurrent : 960;
     _aux.frequencyKHz = configured ? ParamBPS_AuxSC8815Frequency : 300;
+    _aux.resetTimeSeconds = configured ? (uint8_t)ParamBPS_AuxResetTime : 10;
+    if (_aux.resetTimeSeconds == 0)
+        _aux.resetTimeSeconds = 1;
 
     logInfoP("Bus: target %u mV, limit %u mA, %u kHz, reset %u s", _bus.targetVoltage_mV, _bus.currentLimit_mA,
-             _bus.frequencyKHz, _resetTimeSeconds);
+             _bus.frequencyKHz, _bus.resetTimeSeconds);
     logInfoP("Aux: %s, target %u mV, limit %u mA, %u kHz, reset %u s", _aux.enabled ? "enabled" : "disabled",
-             _aux.targetVoltage_mV, _aux.currentLimit_mA, _aux.frequencyKHz, _resetTimeSeconds);
+             _aux.targetVoltage_mV, _aux.currentLimit_mA, _aux.frequencyKHz, _aux.resetTimeSeconds);
 
     // ETS 通信对象绑定表：每侧各填一份
     buildEtsMap(_bus);
@@ -643,16 +652,11 @@ void BusPowerSupplyModule::updateUnit(BpsUnit &u, uint32_t now)
         u.retryCount = 0;
         u.retryTimer = 0;
 
-        // 恢复输出通路；若芯片状态不完整（例如之前因故障停过 OTG），则完整重启一次
-        if (u.chipOk && u.sc->isOtgEnabled())
-        {
-            setOutputPath(u, true);
-            logInfoP("%s: reset finished", u.label);
-        }
+        // 复位时间到：完整重启该路（重新配置 SC8815 + 打开 PGATE）
+        if (startUnit(u))
+            logInfoP("%s: reset finished, setPgateEnable(true), output on", u.label);
         else
-        {
-            startUnit(u);
-        }
+            logWarningP("%s: reset finished but restart failed, retry will follow", u.label);
         return;
     }
 
@@ -812,7 +816,8 @@ void BusPowerSupplyModule::sampleUnit(BpsUnit &u)
     {
         InterruptStatus status = {};
         u.sc->readInterruptStatus(status);
-        u.vbusShort = status.VBUS_SHORT;
+        // 复位/断电期间 OTG 已关、VBUS 本来就接近 0V，这不是短路故障，只有输出本该有电时才判
+        u.vbusShort = status.VBUS_SHORT && u.outputOn;
         u.overTemperature = status.OTP;
 
         u.inputVoltage_mV = (float)u.sc->readAdinVoltage();
@@ -1015,7 +1020,7 @@ void BusPowerSupplyModule::printUnit(BpsUnit &u, bool diagnoseKo)
     }
 
     logInfoP("%s: output %s (target %u mV, limit %u mA, %u kHz, reset %u s)", u.label, state, u.targetVoltage_mV,
-             u.currentLimit_mA, u.frequencyKHz, _resetTimeSeconds);
+             u.currentLimit_mA, u.frequencyKHz, u.resetTimeSeconds);
     logInfoP("%s: out %u mV, %u mA, %u %% load", u.label, (uint16_t)(u.outputVoltage_mV + 0.5f),
              (uint16_t)(u.outputCurrent_mA + 0.5f), (uint8_t)(u.outputLoadPercent + 0.5f));
     logInfoP("%s: in  %u mV, %u mA, %s C", u.label, (uint16_t)(u.inputVoltage_mV + 0.5f),
@@ -1037,9 +1042,8 @@ void BusPowerSupplyModule::printUnit(BpsUnit &u, bool diagnoseKo)
 
 uint32_t BusPowerSupplyModule::resetDurationMS(const BpsUnit &u) const
 {
-    // share.xml 只有一个“复位时间”参数, 总线与辅助共用
-    (void)u;
-    return (uint32_t)_resetTimeSeconds * 1000;
+    // 每路用自己的“复位时间”参数：总线 00001 / 辅助 00074
+    return (uint32_t)(u.resetTimeSeconds ? u.resetTimeSeconds : 1) * 1000;
 }
 
 void BusPowerSupplyModule::showInformations()
@@ -1054,7 +1058,7 @@ void BusPowerSupplyModule::showHelp()
     openknx.console.printHelpLine("bps info", "显示两路输出的测量值与状态");
     openknx.console.printHelpLine("bps bus on|off", "打开/关闭总线电源输出");
     openknx.console.printHelpLine("bps aux on|off", "打开/关闭辅助电源输出");
-    openknx.console.printHelpLine("bps bus|aux reset", "复位该路输出（时长取 ETS“复位时间”；前面板按键需按住 3 s 以上）");
+    openknx.console.printHelpLine("bps bus|aux reset", "复位该路输出（长按按键 3 s 触发：立即断电并停止开关变换，复位时间到后重新上电）");
     openknx.console.printHelpLine("bps bus|aux clear", "清除过流锁存并重新启动该路输出");
     openknx.console.printHelpLine("bps bus|aux pstop on|off", "硬件强制停/释放 PSTOP（直接拉低/释放 ALERT 引脚）");
     openknx.console.printHelpLine("bps bus|aux info", "显示该路输出的测量值与状态");
@@ -1122,7 +1126,7 @@ bool BusPowerSupplyModule::processCommand(const std::string cmd, bool diagnoseKo
     }
     else if (action == "reset")
     {
-        // 复位时长来自 ETS 参数 BPS_ResetTime（share.xml 只有这一个，总线/辅助共用）
+        // 复位时长来自该路自己的 ETS 参数（总线 BPS_ResetTime / 辅助 BPS_AuxResetTime）
         startReset(*unit, resetDurationMS(*unit));
     }
     else if (action == "clear")

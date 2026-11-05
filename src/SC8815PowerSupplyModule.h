@@ -45,9 +45,12 @@
  *    SN74LVC1G74 的 CLR          --> OPENKNX_BPS_SC8815_*_CLR_PIN (软件清除锁存)
  *    OPENKNX_BPS_SC8815_*_CE_PIN --> SC8815 芯片使能 (低有效)
  *    OPENKNX_BPS_SC8815_*_RESET_PIN --> 外部复位按键输入 (上拉, 低 = 按下)
- *        必须按住 BPS_BUTTON_HOLD_MS (3 s) 以上才触发该路“复位”, 短按忽略;
- *        触发后断开输出, 松开起计 ETS“复位时间”(总线/辅助共用同一个参数)后恢复;
- *        一直按住则一直保持断开
+ *        必须连续按住 BPS_BUTTON_HOLD_MS (3 s) 以上才触发该路“复位”, 短按忽略;
+ *        触发后立刻断电：切断 setPgateEnable()（PGATE 关断外部 PMOS）并停止开关变换
+ *        (setOtgEnable(false))，VBUS 掉电，输出真正为 0 V;
+ *        松开后按该路自己的 ETS“复位时间”(总线/辅助各一个参数, 互不影响)计时，
+ *        时间到再完整重启（重新配置 SC8815 并打开 setPgateEnable()）恢复供电;
+ *        一直按住则一直保持断电
  *    输出通断由 SC8815 的 PGATE 引脚控制 (驱动外部 PMOS 栅极):
  *        setPgateEnable(true) = 接通输出, setPgateEnable(false) = 断开输出
  *    OPENKNX_BPS_SC8815_*_INT_PIN   --> SC8815 中断输出 (开漏, 上拉, 目前未使用;
@@ -245,6 +248,7 @@ struct BpsUnit
     uint16_t targetVoltage_mV = 0;
     uint16_t currentLimit_mA = 0;
     uint16_t frequencyKHz = 300;
+    uint8_t resetTimeSeconds = 10; // 该路自己的 ETS“复位时间”（总线 00001 / 辅助 00074）
 
     // ---- 测量值（与通信对象同单位: mV / mA / % / °C）----
     float outputVoltage_mV = 0.0f;
@@ -335,7 +339,6 @@ class BusPowerSupplyModule : public OpenKNX::Module
     BpsUnit _bus;
     BpsUnit _aux;
 
-    uint8_t _resetTimeSeconds = 10; // ETS“复位时间”，总线/辅助共用（share.xml 只有 00001）
     bool _testMode = false;
     uint32_t _testTimer = 0;
 

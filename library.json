@@ -1,6 +1,6 @@
 {
     "name": "OFM-BusPowerSupply",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Bus power supply module for the knx stack, can be embedded in an ETS application",
     "homepage": "https://openknx.de",
     "authors": {
